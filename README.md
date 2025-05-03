@@ -1,140 +1,176 @@
-# 專案介紹 Project Description
-此專案的目的，是為了實現本機端中文化語音轉文字之執行，因此採用**OpenAI**的 **Whisper** 模型，加上 **飛槳 PaddlePaddle** 的中文標點符號標註，以完整呈現中文的閱讀性。
+# 🎙️ 專案介紹 | Project Description
 
-# 功能及流程
-此專案重點在於接受不同模型的套用限制，因此流程並不是簡單的將兩個模組接起來即可，說明如下：
-
-1. 將影音檔轉為 wav 檔：
-   > 轉錄長時間的影音檔(mp4)時，Whisper有高度可能遺失最後30%的內容，因此需要進行將影音專為WAV檔的過程。詳細原因不知，亦有可能是因為本身顯卡效能不佳導致。
-    ```python
-       def convert_wav(b4cover_file_name, b4cover_file_path,  b4cover_type ):
-          b4cover_file = b4cover_file_path + b4cover_file_name + "." + b4cover_type
-          
-          conver_output_file = b4cover_file_path + b4cover_file_name + ".wav"
-          audio = AudioSegment.from_file(b4cover_file)
-          
-          wav_audio = audio.set_channels(1).set_frame_rate(44100)  
-          
-          wav_audio.export(conver_output_file, format="wav")
-          
-          print("轉為wav檔成功：\n" + conver_output_file + "\n")
-          return conver_output_file
-
-3. 將wav檔導入Whisper 模型
-   > Whisper 模型的model type 可選擇 tiny, base, small, medium, large，但我永遠選擇large，因為精準度是我最重要的考量
-    ```python
-       def my_whisper(audio,model_type):
-          
-          print ("開始進行中文語音辦識，請稍等")
-          model = whisper.load_model(model_type)
-          result = model.transcribe(audio, language='zh')
-          print ("中文語音辦識完成")
-          return result
-
-5. 將輸出之文檔，轉為簡體中文
-   > 此時轉為簡中，主要目的是因為Paddle NLP處理簡中效果較佳
-   ```python
-      #繁簡轉換涵數( t2s or s2t)
-      def Ch_Convert(transcript, method):
-          model = OpenCC(method)
-          converted = model.convert(transcript)
-          return converted
-   
-6. 進行文字長度處理，導入 Paddle 模型加註標點符號，轉回繁體中文
-   > 此時因 Paddle 模型的token有所限制，因此需將文檔的長度切分，並將最後結果轉回繁中
-   ```python
-      def Add_punc(raw_script):
-      
-        def split_text(text, max_length):
-            return [text[i:i+max_length] for i in range(0, len(text), max_length)]
-            
-        
-        # 整理逐字稿
-        def process_text(text):
-            model = hub.Module(name='auto_punc')
-            Punc_result = model.add_puncs(text)
-            return Punc_result
-        
-        # 處理長字串
-        def process_long_text(long_text):
-            text_list = split_text(long_text, 300)
-            processed_text_list = process_text(text_list) 
-            return "".join(processed_text_list)
-        
-        # 呼叫分段處理函式
-        processed_transcript = process_long_text(raw_script)
-        print('標點符號加入完成\n')
-        return processed_transcript
-7. 若有專業文字需調整，利用CSV定義檔，進行文字置換
-   > 此步驟可以跳過，如果不需要進行文字的置換
-   ```python
-     def fix_wording(fix_txt, csv_file):
-        replace_dict = {}
-        # 將CSV檔轉換為字典
-        with open(csv_file, mode='r') as file:
-            reader = csv.reader(file)
-    
-            for row in reader:
-                key = row[0]
-                value = row[1]
-                replace_dict[key] = value
-        
-        Replaced_text = fix_txt
-    
-        for old_word, new_word in replace_dict.items():
-            Replaced_text = Replaced_text.replace(old_word, new_word)
-    
-        myfix_result = Replaced_text.replace("-", "\n")
-        
-        print('文字更正置換完成\n')
-        return myfix_result
-9. 儲存為純文字txt檔及word檔
-   > 最終輸出之檔案
-   ```python
-      def convert_text(input_text, file_name , output_file_path):
-          output_text = output_file_path + file_name + ".txt" 
-      
-          with open(output_text, 'w', encoding='utf-8') as file:
-              file.write(input_text)
-      
-          print(f"文本已输出到 {output_text} 純文字檔中")
-          
-      def convert_word(input_text, file_name , output_file_path):
-        
-          doc = Document()
-        
-          word_text = input_text
-          doc.add_paragraph(word_text)
-      
-          text_type = "docx"
-          output_word = output_file_path + file_name + "." + text_type
-          doc.save(output_word)
-      
-          print(f"文本已输出到 {output_word} 文件中。")
- 
+本專案旨在實現**本機端的中文語音轉文字處理流程**，使用：
+- **OpenAI Whisper 模型**：進行語音辨識。
+- **PaddlePaddle + PaddleNLP 模型**：為轉錄結果加入中文標點。
+- **OpenCC**：進行簡繁體中文轉換。
+- 可選擇使用 CSV 字典進行術語/錯字校正，使輸出更符合實務需求。
 
 
+# 🧩 功能與處理流程 | Features & Pipeline
 
-# 環境需求 Environment Request
-此專案對於環境設置的有特殊的需求，因為 Pytorch 及 Paddle 為不同框架，在同時運行在同一張顯卡上容易有GPU資源衝突產生，因此建議參考以下目前(2023.Nov)之版本清單
+以下為完整處理流程，並附上程式範例說明：
 
-## 硬體
-* CPU: Core(TM) i5-13400
-* RAM: DDR4 32 GB
-* GPU: GeForce RTX™ 4070 WINDFORCE OC 12G
+## 1️⃣ 音檔轉 WAV 格式
 
-## 套件清單及版本
-* Python 3.8
-* CUDA 11.8
-* CUDNN 8.3
-* PyTorch 2.0.1 + cuda118
-* Paddlepaddle-gpu 2.4.2 + **cuda117** 
-* Paddle NLP **2.5.2**
+> Whisper 在處理長影音（如 MP4）時，常遺失尾段音訊，建議先轉為 `.wav` 格式 （單聲道 + 44.1kHz）。 
+
+```python
+def convert_to_wav(input_file: str):
+    base = Path(input_file).stem
+    output_file = Path(input_file).with_name(f"{base}.wav")
+    audio = AudioSegment.from_file(input_file)
+    wav_audio = audio.set_channels(1).set_frame_rate(44100)
+    wav_audio.export(output_file, format="wav")
+    logging.info(f"轉換 WAV 成功: {output_file}")
+    return str(output_file)
+```
+
+## 2️⃣ 語音轉文字（Whisper）
+
+> 可選模型：`tiny`、`base`、`small`、`medium`、`large`。本專案以 `large` 模型為預設，以求最佳辨識效果。
+> 進行分段切割並使用 tqdm 顯示目前處理的段落與進度比例，以確認本機端轉檔狀態，避免誤認當機，也避免單次傳入過長檔案造成 GPU 不穩。
+
+```python
+def my_whisper(audio_path, segment_length=300000):
+    logging.info("開始進行中文語音辨識（分段+進度提示）")
+    audio = AudioSegment.from_wav(audio_path)
+    segments = [audio[i:i+segment_length] for i in range(0, len(audio), segment_length)]
+
+    # 在此加入分段數量提示
+    total_segments = len(segments)
+    logging.info(f"音檔已分割成 {total_segments} 個分段進行處理。")
+
+    full_text = ""
+    for idx, segment in enumerate(tqdm(segments, desc="辨識進度")):
+        segment.export("temp.wav", format="wav")
+        result = whisper_model.transcribe("temp.wav", language='zh')
+        full_text += result["text"]
+
+        os.remove("temp.wav")
+        del segment, result
+        torch.cuda.empty_cache()
+        gc.collect()
+
+    logging.info("中文語音辨識完成")
+    return full_text
+
+```
+## 3️⃣ 簡體繁體轉換機制（為 Paddle 增加辨識率）
+
+> Paddle 的標點符號模型對簡體中文支援較好，因此需有簡體繁體的交換機制。
+
+```python
+def ch_convert(transcript, method):
+    return OpenCC(method).convert(transcript)
+
+```
+
+## 4️⃣ 加入標點符號（Paddle NLP）
+
+> Paddle 模型對文字長度有上限，需分段處理，再合併結果。
+
+```python
+def add_punctuation(raw_script):
+    def split_text(text, max_length=200):
+        return [text[i:i+max_length] for i in range(0, len(text), max_length)]
+    text_list = split_text(raw_script)
+    processed_text = punc_model.add_puncs(text_list)
+    logging.info('標點符號加入完成')
+    return "".join(processed_text)
+
+```
+
+## 5️⃣ 邏輯文字校正（可選）
+
+> 可透過外部定義的 CSV 字典進行詞彙替換，如錯字校正、專業術語微調。
+
+```python
+def fix_wording(fix_txt, csv_file):
+    with open(csv_file, mode='r', encoding='utf-8') as file:
+        reader = csv.reader(file)
+        replace_dict = {rows[0]: rows[1] for rows in reader}
+    for old_word, new_word in replace_dict.items():
+        fix_txt = fix_txt.replace(old_word, new_word)
+    logging.info('文字更正置換完成')
+    return fix_txt.replace("-", "\n")
+
+```
+
+## 6️⃣ 輸出為純文字檔與 Word 檔
+
+> 將最終文字輸出為 `.txt` 與 `.docx`，便於後續整理與分享。
+
+```python
+def convert_text(input_text, file_name, output_file_path):
+    output_text = Path(output_file_path) / f"{file_name}.txt"
+    with open(output_text, 'w', encoding='utf-8') as file:
+        file.write(input_text)
+    logging.info(f"已輸出純文字檔: {output_text}")
+
+def convert_word(input_text, file_name, output_file_path):
+    output_word = Path(output_file_path) / f"{file_name}.docx"
+    doc = Document()
+    doc.add_paragraph(input_text)
+    doc.save(output_word)
+    logging.info(f"已輸出 Word 檔: {output_word}")
+```
+# ⚙️ 其他進階設計與優化 | Advanced Design
+
+## ✅ 記憶體釋放管理
+
+每段處理完後執行：
+
+```python
+del segment, result
+torch.cuda.empty_cache()
+gc.collect()
+```
+
+可有效避免多段或多檔轉錄時 GPU 爆掉。
+## ✅ 支援批次處理多檔
+
+```python
+file_list = ["a.mp3", "b.m4a"]
+for file in file_list:
+    main(file_list=[file], ...)
+```
+
+- 每筆檔案獨立處理
+- 中途錯誤不影響其他檔案
+- 自動刪除中繼 `.wav` 檔案
+
+## ✅ 全程日誌輸出（logging）
+
+每個處理步驟皆記錄於 `logging.info()`，包含：
+
+- 檔案開始與結束時間
+- 各階段狀態
+- 錯誤提示（`logging.warning`）
 
 
-## 參考連結
-* Whisper : https://github.com/openai/whisper
-* PyTorch : https://pytorch.org/
-* Paddle : https://www.paddlepaddle.org.cn/
-* OpenCC (簡體繁體轉換): https://github.com/BYVoid/OpenCC 
+# 🧪 環境需求 | Environment Requirements
 
+## ✅ 建議硬體規格
+
+| 項目 | 規格 |
+|------|------|
+| CPU  | Intel Core i5-13400 |
+| RAM  | DDR4 32GB |
+| GPU  | NVIDIA GeForce RTX 4070 |
+
+
+## ✅ 建議軟體與套件版本
+
+| 套件 | 建議版本 |
+|------|----------|
+| Python | 3.8 |
+| CUDA | 11.8 |
+| cuDNN | 8.3 |
+| PyTorch | 2.0.1 (cuda118) |
+| PaddlePaddle-GPU | 2.4.2 (cuda117) |
+| PaddleNLP | 2.5.2 |
+
+> ⚠️ Paddle 和 PyTorch 運行於不同 CUDA 版本，請避免同時佔用 GPU 以降低資源衝突。
+
+---
